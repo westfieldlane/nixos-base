@@ -1,0 +1,30 @@
+{
+  imports = [
+    ./accounts-daemon.nix
+    ./acipd.nix
+    ./auditd.nix
+    ./autovt.nix
+    ./avahi.nix
+    ./blocky.nix
+    ./bluetooth.nix
+    ./colord.nix
+    ./cups.nix
+    ./dbus.nix
+    ./display-manager.nix
+    ./docker.nix
+    ./nix-daemon.nix
+    ./nscd.nix
+    ./reload-systemd-vconsole-setup.nix
+    ./rescue.nix
+    ./rtkit.nix
+    ./systemd-ask-password-console.nix
+    ./systemd-ask-password-wall.nix
+    ./systemd-emergency-mode.nix
+    ./systemd-journald.nix
+    ./systemd-machined.nix
+    ./systemd-rfkill.nix
+    ./systemd-udevd.nix
+    ./tmp-tmpfs.nix
+    ./wpa_supplicant.nix
+  ];
+}
