@@ -1,6 +1,9 @@
+let
+  nixpkgs = import ./nixpkgs.nix;
+  lib = nixpkgs.lib;
+in
 {
-  # Declaratively manage the nixpkgs "channel"
-  pkgs = import (import ./nixpkgs.nix) { };
+  inherit nixpkgs lib;
 
   # Add all core software that every machine should have
   # NOTE: the services sub-directory sandboxes services appropriately in SystemD
