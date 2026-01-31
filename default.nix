@@ -1,10 +1,9 @@
 let
-  nixpkgs = import ./nixpkgs.nix;
-  nixosLib = nixpkgs.lib;
+  pkgs = import (import ./nixpkgs.nix) { };
+  lib = pkgs.lib;
 in
 {
-  pkgs = nixpkgs;
-  lib = nixosLib;
+  inherit pkgs lib;
   # Add all core software that every machine should have
   # NOTE: the services sub-directory sandboxes services appropriately in SystemD
   imports = [
