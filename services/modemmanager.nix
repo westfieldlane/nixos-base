@@ -1,0 +1,3 @@
+{
+  networking.modemmanager.enable = false;
+}

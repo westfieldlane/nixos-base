@@ -7,11 +7,15 @@
     ./avahi.nix
     ./blocky.nix
     ./bluetooth.nix
+    ./chrony.nix
     ./colord.nix
     ./cups.nix
+    ./dbus-broker.nix
     ./dbus.nix
     ./display-manager.nix
     ./docker.nix
+    ./geoclue2.nix
+    ./modemmanager.nix
     ./nix-daemon.nix
     ./nscd.nix
     ./reload-systemd-vconsole-setup.nix
@@ -25,6 +29,7 @@
     ./systemd-rfkill.nix
     ./systemd-udevd.nix
     ./tmp-tmpfs.nix
+    ./udisks2.nix
     ./wpa_supplicant.nix
   ];
 }

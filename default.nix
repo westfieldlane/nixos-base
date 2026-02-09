@@ -9,6 +9,7 @@ in
   imports = [
     ./autoUpgrade.nix
     ./bat.nix
+    ./boot.nix
     ./bottom.nix
     ./fd.nix
     ./fish.nix
