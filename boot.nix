@@ -13,6 +13,7 @@
     ];
 
     kernel.sysctl = {
+      "kernel.unprivileged_userns_clone" = 1;
       "fs.suid_dumpable" = 0;
       "kernel.kptr_restrict" = 2;
       "kernel.dmesg_restrict" = 1;
