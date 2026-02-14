@@ -13,6 +13,7 @@ in
     ./bottom.nix
     ./fd.nix
     ./fish.nix
+    ./git.nix
     ./helix.nix
     ./locale.nix
     ./lsd.nix
