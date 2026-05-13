@@ -28,7 +28,6 @@
     ./systemd-machined.nix
     ./systemd-rfkill.nix
     ./systemd-udevd.nix
-    ./tailscale.nix
     ./tmp-tmpfs.nix
     ./udisks2.nix
     ./wpa_supplicant.nix
