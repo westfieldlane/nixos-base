@@ -1,30 +1,6 @@
-{ lib, config, ... }:
+{ lib, ... }:
 let
   inherit (lib) types;
-
-  uids = config.custom.ids.uids;
-  gids = config.custom.ids.gids;
-
-
-  # If a uid/gid is defined in this module, then enforce its use
-  # Else, just use the configuration as defined
-  assignUid = users: lib.mapAttrs
-    (name: userCfg:
-      if uids ? ${name} then
-        userCfg // { uid = uids.${name}; }
-      else
-        userCfg
-    )
-    users;
-
-  assignGid = users: lib.mapAttrs
-    (name: userCfg:
-      if gids ? ${name} then
-        userCfg // { gid = gids.${name}; }
-      else
-        userCfg
-    )
-    users;
 in
 {
   options = {
@@ -59,18 +35,5 @@ in
         cwa = 35000;
       };
     };
-
-    # Make it so users don't have to manually assign their ids from this
-    # module. It's done for them.
-    # 
-    # NOTE: Since all user ids should be managed here, any user that isn't will
-    # throw an error.
-    users.users = lib.mkIf (config.users.users != { }) (
-      assignUid config.users.users
-    );
-
-    users.groups = lib.mkIf (config.users.users != { }) (
-      assignGid config.users.groups
-    );
   };
 }
