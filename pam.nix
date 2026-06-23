@@ -1,8 +1,14 @@
 {
-  security.pam.services.login.logFailures = true;
-  security.pam.services.sshd.logFailures = true;
-  security.pam.services.sudo.logFailures = true;
-  security.pam.services.su.logFailures = true;
+  security.pam.services = {
+    login.logFailures = true;
+    sshd.logFailures = true;
+    sudo.logFailures = true;
+    su = {
+      logFailures = true;
+      requireWheel = true;
+    };
+  };
+
 
   environment.etc."security/faillock.conf".text = ''
     deny = 5
