@@ -7,6 +7,7 @@
     ./boot.nix
     ./bottom.nix
     ./fd.nix
+    ./firewall.nix
     ./fish.nix
     ./git.nix
     ./helix.nix
@@ -16,6 +17,7 @@
     ./nix.nix
     ./nixd.nix
     ./ripgrep.nix
+    ./ssh.nix
 
     ./services
   ];
