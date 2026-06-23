@@ -2,6 +2,7 @@
   # Add all core software that every machine should have
   # NOTE: the services sub-directory sandboxes services appropriately in SystemD
   imports = [
+    ./audit.nix
     ./autoUpgrade.nix
     ./bat.nix
     ./boot.nix
@@ -16,8 +17,10 @@
     ./lsd.nix
     ./nix.nix
     ./nixd.nix
+    ./pam.nix
     ./ripgrep.nix
     ./ssh.nix
+    ./sudo.nix
 
     ./services
   ];
