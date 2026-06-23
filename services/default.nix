@@ -8,6 +8,7 @@
     ./blocky.nix
     ./bluetooth.nix
     ./chrony.nix
+    ./clamav.nix
     ./colord.nix
     ./cups.nix
     ./dbus-broker.nix
