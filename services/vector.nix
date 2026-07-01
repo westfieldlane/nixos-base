@@ -21,6 +21,10 @@
       sources.journald = {
         type = "journald";
         current_boot_only = false;
+        # Prevent feedback loop: Vector's own logs go to journald, so
+        # without this we'd re-process every log line we emit, which
+        # amplifies volume dramatically.
+        exclude_units = [ "vector.service" ];
       };
 
       # Single VRL pass: envelope → classifier → per-dataset enrichment.
