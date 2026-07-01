@@ -8,7 +8,12 @@
     active = true;
     direction = "out";
     path = "${pkgs.audit}/bin/audisp-syslog";
-    args = [ "LOG_INFO" ];
+    # NB: don't set `args` — the NixOS module already defaults to
+    # [ "LOG_INFO" ], and list options merge rather than override, so
+    # setting it here produces `args = LOG_INFO LOG_INFO` in the plugin
+    # config file. audisp-syslog reads that as priority + facility, and
+    # since "LOG_INFO" isn't a valid facility name, silently refuses to
+    # forward — auditd events never reach journald.
     format = "string";
   };
 
