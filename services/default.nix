@@ -22,6 +22,7 @@
     ./reload-systemd-vconsole-setup.nix
     ./rescue.nix
     ./rtkit.nix
+    ./smartd.nix
     ./systemd-ask-password-console.nix
     ./systemd-ask-password-wall.nix
     ./systemd-emergency-mode.nix
@@ -32,6 +33,7 @@
     ./tailscale.nix
     ./tmp-tmpfs.nix
     ./udisks2.nix
+    ./vector.nix
     ./wpa_supplicant.nix
   ];
 }

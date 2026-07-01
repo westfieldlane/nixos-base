@@ -3,7 +3,6 @@
   # NOTE: the services sub-directory sandboxes services appropriately in SystemD
   imports = [
     ./appArmor.nix
-    ./audit.nix
     ./autoUpgrade.nix
     ./bat.nix
     ./boot.nix
