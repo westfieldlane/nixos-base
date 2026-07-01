@@ -29,14 +29,22 @@
         inputs = [ "journald" ];
         source = ''
           # --- Envelope -----------------------------------------------
+          # Note: VRL doesn't narrow types via `if x == null` checks —
+          # we have to explicitly coerce with `to_string(...) ?? default`
+          # so downstream operations know the value is a string.
           .ecs.version = "8.11"
-          hostname = get_hostname!() ?? "unknown"
-          .host = { "hostname": hostname, "name": hostname }
-          .@timestamp = del(.timestamp) ?? now()
 
-          unit = del(._SYSTEMD_UNIT) ?? ""
-          .process.name = if unit != "" { unit } else { del(._COMM) ?? "" }
-          .process.pid = to_int(del(._PID) ?? 0) ?? 0
+          hostname = to_string(del(.host)) ?? "unknown"
+          .host = { "hostname": hostname, "name": hostname }
+
+          ts = del(.timestamp)
+          if ts == null { ts = now() }
+          .@timestamp = ts
+
+          unit = to_string(del(._SYSTEMD_UNIT)) ?? ""
+          comm = to_string(del(._COMM)) ?? ""
+          if unit != "" { .process.name = unit } else { .process.name = comm }
+          .process.pid = to_int(del(._PID)) ?? 0
 
           # Drop the noisiest journald internals we won't query on
           del(._MACHINE_ID); del(._BOOT_ID); del(._TRANSPORT)
@@ -45,15 +53,16 @@
           del(._SYSTEMD_INVOCATION_ID); del(._SYSTEMD_SLICE)
 
           # --- Classifier ---------------------------------------------
+          # Sequential-override pattern: default first, then any prefix
+          # match wins. Our prefixes are disjoint so ordering is safe.
           .data_stream.type = "logs"
           .data_stream.namespace = "default"
-          .data_stream.dataset =
-            if starts_with(unit, "audit") ?? false          { "auditd"    }
-            else if starts_with(unit, "sshd") ?? false      { "ssh"       }
-            else if starts_with(unit, "fail2ban") ?? false  { "fail2ban"  }
-            else if starts_with(unit, "sudo") ?? false      { "sudo"      }
-            else if starts_with(unit, "clamav") ?? false    { "clamav"    }
-            else                                            { "system"    }
+          .data_stream.dataset = "system"
+          if starts_with(unit, "audit")    { .data_stream.dataset = "auditd"   }
+          if starts_with(unit, "sshd")     { .data_stream.dataset = "ssh"      }
+          if starts_with(unit, "fail2ban") { .data_stream.dataset = "fail2ban" }
+          if starts_with(unit, "sudo")     { .data_stream.dataset = "sudo"     }
+          if starts_with(unit, "clamav")   { .data_stream.dataset = "clamav"   }
 
           # --- Per-dataset enrichment ---------------------------------
           dataset = .data_stream.dataset
@@ -67,18 +76,18 @@
               fields, ferr = parse_key_value(m.rest, key_value_delimiter: "=", field_delimiter: " ")
               if ferr == null {
                 .audit.fields = fields
-                if exists(fields.res) {
-                  .event.outcome = if fields.res == "success" { "success" } else { "failure" }
+                if fields.res != null {
+                  if fields.res == "success" { .event.outcome = "success" } else { .event.outcome = "failure" }
                 }
               }
             }
           } else if dataset == "ssh" {
             .event = { "kind": "event", "category": ["authentication"] }
-            if contains(msg, "Accepted") ?? false {
+            if contains(msg, "Accepted") {
               .event.outcome = "success"; .event.action = "logged-in"
-            } else if contains(msg, "Failed password") ?? false {
+            } else if contains(msg, "Failed password") {
               .event.outcome = "failure"; .event.action = "password-failed"
-            } else if contains(msg, "Invalid user") ?? false {
+            } else if contains(msg, "Invalid user") {
               .event.outcome = "failure"; .event.action = "user-not-found"
             }
             m, err = parse_regex(msg, r'from (?P<ip>\S+) port (?P<port>\d+)')
@@ -87,8 +96,10 @@
             .event = { "kind": "alert", "category": ["intrusion_detection"] }
             m, err = parse_regex(msg, r'\]\s+(?P<action>Ban|Unban|Found)\s+(?P<ip>\S+)')
             if err == null {
-              .event.action = downcase(m.action) ?? m.action
               .source.ip = m.ip
+              if m.action == "Ban"   { .event.action = "ban"    }
+              if m.action == "Unban" { .event.action = "unban"  }
+              if m.action == "Found" { .event.action = "detect" }
             }
           } else if dataset == "sudo" {
             .event = { "kind": "event", "category": ["iam"], "type": ["change"] }
@@ -100,7 +111,7 @@
               .event.action = "sudo-run"
             }
           } else if dataset == "clamav" {
-            if contains(msg, "FOUND") ?? false {
+            if contains(msg, "FOUND") {
               .event = { "kind": "event", "category": ["malware"], "action": "malware-detected", "outcome": "failure" }
               m, err = parse_regex(msg, r'(?P<p>\S+):\s+(?P<s>\S+)\s+FOUND')
               if err == null { .file.path = m.p; .threat.name = m.s }
