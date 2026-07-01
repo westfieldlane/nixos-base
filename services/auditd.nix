@@ -1,6 +1,22 @@
 { pkgs, ... }: {
   security.auditd.enable = true;
 
+  # Auditd runtime settings. Without these, audit.log can grow unbounded
+  # (observed 22 GB in 6h on a workstation during nixos-rebuild activity).
+  #   max_log_file / num_logs        →  100 MB × 5 = 500 MB cap
+  #   max_log_file_action = "rotate" →  rotate on full instead of blocking
+  #   disp_qos = "lossy"             →  drop events at the dispatcher under
+  #                                     pressure rather than block the kernel
+  #                                     (better than the kernel dropping via
+  #                                     netlink, which shows up as `lost N`
+  #                                     in `auditctl -s`)
+  security.auditd.settings = {
+    max_log_file = 100;
+    num_logs = 5;
+    max_log_file_action = "rotate";
+    disp_qos = "lossy";
+  };
+
   # Stage 1 of the log pipeline (see services/vector.nix): bridge auditd
   # events into journald via the audispd syslog plugin. /var/log/audit/audit.log
   # remains the durable primary; journald gets a duplicate for Vector to ingest.
@@ -52,9 +68,12 @@
     # Permission and ownership changes from user sessions
     "-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,lchown,fchownat -F auid>=1000 -F auid!=-1 -k perm_change"
 
-    # Denied access attempts from user sessions
-    "-a always,exit -F arch=b64 -S open,openat,creat,truncate,ftruncate -F exit=-EACCES -F auid>=1000 -F auid!=-1 -k access_denied"
-    "-a always,exit -F arch=b64 -S open,openat,creat,truncate,ftruncate -F exit=-EPERM -F auid>=1000 -F auid!=-1 -k access_denied"
+    # NB: previously we watched -EACCES/-EPERM open(),creat(),truncate() for
+    # "denied access." Removed because on desktop hosts every process monitor
+    # (bottom, ps, top…) probes /proc/PID/io on non-owned PIDs constantly,
+    # generating a firehose (22 GB/6h observed). Failed file access is also
+    # a weak security signal on its own. Add back per-host with tighter
+    # filters if a specific detection use case emerges.
   ];
 
   systemd.services.auditd.serviceConfig = {

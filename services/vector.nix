@@ -57,16 +57,23 @@
           del(._SYSTEMD_INVOCATION_ID); del(._SYSTEMD_SLICE)
 
           # --- Classifier ---------------------------------------------
-          # Sequential-override pattern: default first, then any prefix
-          # match wins. Our prefixes are disjoint so ordering is safe.
+          # Sequential-override pattern: default first, then any match
+          # wins. We check both the systemd unit AND _COMM because
+          # user-invoked programs (sudo especially) don't have their own
+          # systemd unit — they inherit user@N.service.
           .data_stream.type = "logs"
           .data_stream.namespace = "default"
           .data_stream.dataset = "system"
+
+          # Unit-based (services running as systemd units)
           if starts_with(unit, "audit")    { .data_stream.dataset = "auditd"   }
           if starts_with(unit, "sshd")     { .data_stream.dataset = "ssh"      }
           if starts_with(unit, "fail2ban") { .data_stream.dataset = "fail2ban" }
-          if starts_with(unit, "sudo")     { .data_stream.dataset = "sudo"     }
           if starts_with(unit, "clamav")   { .data_stream.dataset = "clamav"   }
+
+          # Comm-based (invoked from user sessions, not systemd services)
+          if comm == "sudo"           { .data_stream.dataset = "sudo"   }
+          if comm == "audisp-syslog"  { .data_stream.dataset = "auditd" }
 
           # --- Per-dataset enrichment ---------------------------------
           dataset = .data_stream.dataset
