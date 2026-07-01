@@ -1,35 +1,16 @@
 { pkgs, ... }: {
   security.auditd.enable = true;
 
-  # Auditd runtime settings. Without these, audit.log can grow unbounded
-  # (observed 22 GB in 6h on a workstation during nixos-rebuild activity).
-  #   max_log_file / num_logs        →  100 MB × 5 = 500 MB cap
-  #   max_log_file_action = "rotate" →  rotate on full instead of blocking
-  #   disp_qos = "lossy"             →  drop events at the dispatcher under
-  #                                     pressure rather than block the kernel
-  #                                     (better than the kernel dropping via
-  #                                     netlink, which shows up as `lost N`
-  #                                     in `auditctl -s`)
   security.auditd.settings = {
     max_log_file = 100;
     num_logs = 5;
     max_log_file_action = "rotate";
-    disp_qos = "lossy";
   };
 
-  # Stage 1 of the log pipeline (see services/vector.nix): bridge auditd
-  # events into journald via the audispd syslog plugin. /var/log/audit/audit.log
-  # remains the durable primary; journald gets a duplicate for Vector to ingest.
   security.auditd.plugins.syslog = {
     active = true;
     direction = "out";
     path = "${pkgs.audit}/bin/audisp-syslog";
-    # NB: don't set `args` — the NixOS module already defaults to
-    # [ "LOG_INFO" ], and list options merge rather than override, so
-    # setting it here produces `args = LOG_INFO LOG_INFO` in the plugin
-    # config file. audisp-syslog reads that as priority + facility, and
-    # since "LOG_INFO" isn't a valid facility name, silently refuses to
-    # forward — auditd events never reach journald.
     format = "string";
   };
 
