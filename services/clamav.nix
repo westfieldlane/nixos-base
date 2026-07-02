@@ -1,6 +1,12 @@
 {
   services.clamav = {
-    daemon.enable = true;
+    daemon = {
+      enable = true;
+      settings.ExcludePath = [
+        "^/home/[^/]+/\\.local/share/containers"
+        "^/home/[^/]+/\\.local/share/zed"
+      ];
+    };
     updater.enable = true;
     updater.frequency = 12;
     scanner = {
