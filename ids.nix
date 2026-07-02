@@ -28,11 +28,15 @@ in
         jellyfin = 994;
         imhotep = 1000;
         cwa = 35000;
+        immich = 35001;
+        nextcloud = 35002;
       };
 
       gids = {
         jellyfin = 992;
         cwa = 35000;
+        immich = 35001;
+        nextcloud = 35002;
       };
     };
   };
