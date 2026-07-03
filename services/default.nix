@@ -22,7 +22,7 @@
     ./reload-systemd-vconsole-setup.nix
     ./rescue.nix
     ./rtkit.nix
-    ./smartd.nix
+    # ./smartd.nix
     ./systemd-ask-password-console.nix
     ./systemd-ask-password-wall.nix
     ./systemd-emergency-mode.nix
