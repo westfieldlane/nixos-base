@@ -17,6 +17,8 @@
     ./docker.nix
     ./geoclue2.nix
     ./modemmanager.nix
+    ./NetworkManager.nix
+    ./NetworkManager-dispatcher.nix
     ./nix-daemon.nix
     ./nscd.nix
     ./reload-systemd-vconsole-setup.nix
