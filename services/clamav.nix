@@ -67,8 +67,9 @@ in
     ProtectControlGroups = true;
     ProtectClock = true;
     ProtectHostname = true;
-    PrivateTmp = true;
-    PrivateDevices = true;
+    PrivateTmp = "yes";
+    PrivateDevices = "yes";
+    PrivateNetwork = "yes";
     RestrictAddressFamilies = [ "AF_UNIX" ]; # LocalSocket=/run/clamav/clamd.ctl
     RestrictNamespaces = true;
     RestrictRealtime = true;
