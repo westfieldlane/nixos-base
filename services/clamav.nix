@@ -1,6 +1,6 @@
 { lib, pkgs, ... }:
 let
-  # Directories to scan (referenced by both the module and the forced ExecStart below).
+  # Directories the scheduled scan walks (passed to the forced ExecStart below).
   scanDirs = [
     "/home"
     "/var/lib"
@@ -9,14 +9,10 @@ let
     "/var/tmp"
   ];
 
-  # Paths to skip: container/VM image stores and database data dirs. These hold
-  # large, frequently-changing, non-executable blobs that are pointless to scan
-  # and are what pins the CPU. Regexes are matched against the full path.
-  #
   # NOTE: with `clamdscan --fdpass`, clamd.conf's ExcludePath is bypassed (the
   # client walks the tree and passes fds). So the authoritative excludes for the
   # scheduled scan are the client-side `--exclude-dir` flags in ExecStart below;
-  # the daemon ExcludePath list is kept only for on-access scanning.
+  # the daemon ExcludePath list only applies to manual, non-`--fdpass` scans.
   excludeDirs = [
     "^/home/[^/]+/\\.local/share/containers"
     "^/home/[^/]+/\\.config/containers"
@@ -36,9 +32,7 @@ in
       enable = true;
       settings = {
         ExcludePath = excludeDirs;
-        # Cap scan parallelism: 4 of 8 cores instead of the default 10 threads.
         MaxThreads = 4;
-        # Don't let a single pathological archive peg a worker forever (ms).
         MaxScanTime = 120000;
       };
     };
@@ -47,25 +41,41 @@ in
     scanner = {
       enable = true;
       interval = "*-*-* 05:30:00";
-      scanDirectories = scanDirs;
     };
   };
 
-  # The NixOS module hardcodes the clamdscan command with no way to pass
-  # --exclude-dir, and ExcludePath doesn't apply under --fdpass. Force the
-  # command to add client-side excludes.
+  # The module's clamdscan exposes no --exclude-dir knob; force the command to add
+  # client-side excludes (+ --allmatch).
   systemd.services.clamdscan.serviceConfig.ExecStart = lib.mkForce (
     "${pkgs.clamav}/bin/clamdscan --multiscan --fdpass --infected --allmatch "
     + "${excludeFlags} ${lib.concatStringsSep " " scanDirs}"
   );
 
-  # The scan's CPU is spent in the long-running clamd daemon, so throttle there.
-  # Soft controls (weight/nice) let the 05:30 scan run full-speed when the box
-  # is idle but yield immediately to interactive work if it overlaps.
   systemd.services.clamav-daemon.serviceConfig = {
     Nice = 15;
     CPUWeight = 30;
     IOSchedulingClass = "idle";
     IOWeight = 30;
+
+    NoNewPrivileges = true;
+    ProtectSystem = "strict";
+    ProtectHome = "read-only";
+    ProtectProc = "invisible";
+    ProtectKernelTunables = true;
+    ProtectKernelModules = true;
+    ProtectKernelLogs = true;
+    ProtectControlGroups = true;
+    ProtectClock = true;
+    ProtectHostname = true;
+    PrivateTmp = true;
+    PrivateDevices = true;
+    RestrictAddressFamilies = [ "AF_UNIX" ]; # LocalSocket=/run/clamav/clamd.ctl
+    RestrictNamespaces = true;
+    RestrictRealtime = true;
+    RestrictSUIDSGID = true;
+    LockPersonality = true;
+    MemoryDenyWriteExecute = true;
+    SystemCallArchitectures = "native";
+    CapabilityBoundingSet = [ "" ];
   };
 }
