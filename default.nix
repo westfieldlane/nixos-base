@@ -18,6 +18,7 @@
     ./nix.nix
     ./nixd.nix
     ./pam.nix
+    ./pki.nix
     ./ripgrep.nix
     ./ssh.nix
     ./sudo.nix
