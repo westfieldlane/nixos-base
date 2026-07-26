@@ -12,13 +12,11 @@
     ./fish.nix
     ./git.nix
     ./helix.nix
-    ./ids.nix
     ./locale.nix
     ./lsd.nix
     ./nix.nix
     ./nixd.nix
     ./pam.nix
-    ./pki.nix
     ./ripgrep.nix
     ./ssh.nix
     ./sudo.nix
