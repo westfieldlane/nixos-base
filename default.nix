@@ -7,6 +7,7 @@
     ./bat.nix
     ./boot.nix
     ./bottom.nix
+    ./documentation.nix
     ./fd.nix
     ./firewall.nix
     ./fish.nix
