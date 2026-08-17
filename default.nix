@@ -4,13 +4,13 @@
   imports = [
     ./appArmor.nix
     ./autoUpgrade.nix
+    ./bash.nix
     ./bat.nix
     ./boot.nix
     ./bottom.nix
     ./documentation.nix
     ./fd.nix
     ./firewall.nix
-    ./fish.nix
     ./git.nix
     ./helix.nix
     ./locale.nix
@@ -19,9 +19,9 @@
     ./nixd.nix
     ./pam.nix
     ./ripgrep.nix
-    ./ssh.nix
     ./sudo.nix
 
+    ./modules
     ./services
   ];
 }

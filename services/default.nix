@@ -15,12 +15,14 @@
     ./dbus.nix
     ./display-manager.nix
     ./docker.nix
+    ./fail2ban.nix
     ./geoclue2.nix
     ./modemmanager.nix
     ./NetworkManager.nix
     ./NetworkManager-dispatcher.nix
     ./nix-daemon.nix
     ./nscd.nix
+    ./openssh.nix
     ./reload-systemd-vconsole-setup.nix
     ./rescue.nix
     ./rtkit.nix
@@ -34,6 +36,7 @@
     ./tmp-tmpfs.nix
     ./udisks2.nix
     ./vector.nix
+    ./vulnix.nix
     ./wpa_supplicant.nix
   ];
 }
