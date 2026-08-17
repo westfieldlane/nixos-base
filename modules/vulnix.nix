@@ -121,7 +121,7 @@ in
             compact="$latest.compact"
 
             rc=0
-            ${vulnix} -Sv --json >"$staging" || rc=$?
+            ${vulnix} -S --json >"$staging" || rc=$?
 
             if ! ${jq} -e . "$staging" >/dev/null 2>&1; then
               ${rm} -f "$staging"
@@ -133,11 +133,10 @@ in
             ${mv} -f "$staging" "$latest"
 
             ${jq} -c . "$latest" >"$compact"
-            size="$(${wc} -c <"$compact")"
-            if [ "$size" -lt 48000 ]; then
-              ${cat} "$compact"
-            else
-              echo "report is $size bytes and exceeds one journal record; full report retained at $latest" >&2
+            ${cat} "$compact"
+
+            if [ $(${wc} -c <"$compact") -gt 48000 ]; then
+              echo "report is $size bytes and may exceed one journal record; full report retained at $latest" >&2
             fi
             ${rm} -f "$compact"
 
