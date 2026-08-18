@@ -1,6 +1,29 @@
 { pkgs, config, lib, ... }:
 let
   cfg = config.services.vulnix;
+
+  # WARNING: This (resolveTargets) specifically runs as root so the scanner
+  # utility can run with minimal permissions. This will resolve all targets
+  # in the cfg.closures option to their nix store paths.
+  resolveTargets = pkgs.writeShellScript "vulnix-resolve-targets" ''
+    set -eu
+    export LC_ALL=C
+
+    out="$STATE_DIRECTORY/targets"
+    tmp="$out.new"
+
+    : >"$tmp"
+    for target in ${lib.concatStringsSep " " cfg.closures}; do
+      if [ -e "$target" ]; then
+        ${pkgs.coreutils}/bin/readlink -f "$target" >>"$tmp"
+      fi
+    done
+    ${pkgs.coreutils}/bin/sort -u -o "$tmp" "$tmp"
+
+    # 0644 explicitly: root writes it, the scan user reads it, UMask=0027.
+    ${pkgs.coreutils}/bin/install -m 0644 "$tmp" "$out"
+    ${pkgs.coreutils}/bin/rm -f "$tmp"
+  '';
 in
 {
   options = {
@@ -26,8 +49,6 @@ in
           User account under which the scan runs. It owns the NVD cache in
           {file}`/var/lib/vulnix` and the retained report in
           {file}`/var/log/vulnix`.
-
-          The account is declared by this module.
         '';
       };
 
@@ -35,13 +56,7 @@ in
         type = lib.types.str;
         default = "vulnix";
         description = ''
-          Primary group of {option}`services.vulnix.user`. Members can read the
-          most recent report at {file}`/var/log/vulnix/latest.json` without
-          root, so point this at an existing administrative group, or add
-          administrators to it, to grant access.
-
-          Leaving this at the default creates a group nobody belongs to, which
-          makes the retained report root-only in practice.
+          Primary group of {option}`services.vulnix.user`. 
         '';
       };
 
@@ -51,82 +66,27 @@ in
         example = "http://mirror.soe.example.org/nvd/";
         description = ''
           Base URL the NVD JSON feeds are fetched from, passed to vulnix as
-          `-m`. Null omits the flag entirely, leaving vulnix on its own default
-          of <https://nvd.nist.gov/feeds/json/cve/2.0/>.
-
-          A mirror must serve the upstream file names, {file}`nvdcve-2.0-`
-          followed by the year and {file}`.json.gz`, and should pass through
-          `ETag`, because vulnix revalidates with `If-None-Match` and skips any
-          archive that answers 304. Without that the scan re-downloads
-          everything on every run.
-
-          NIST shapes these feeds to roughly 90 KB/s per connection against a
-          20 MB-plus archive per year, so a fleet pointed straight at
-          {file}`nvd.nist.gov` spends minutes per host per cold start and draws
-          further throttling from a shared egress address. An internal mirror
-          seeded once and served over the LAN avoids both.
-
-          This must be a feed URL. The NVD REST API is a different interface
-          and vulnix cannot read it.
-        '';
-      };
-
-      scanProfiles = lib.mkOption {
-        type = lib.types.bool;
-        default = true;
-        description = ''
-          Also scan the Nix profiles found on the machine, so packages a user
-          installed outside the system closure are covered.
-
-          `-S` reaches the activated system and nothing else. Anything from
-          {command}`nix profile`, {command}`nix-env`, or home-manager lives in a
-          separate profile whose closure the system never references, and on a
-          typical workstation that is a few hundred store paths of genuinely
-          executable software. Leaving them out understates what the machine
-          runs, which is the one error worth avoiding here.
-
-          The standard profile locations are globbed at scan time and the ones
-          that exist are added as targets. Discovery is deliberately runtime
-          rather than evaluation time, because which users exist and what they
-          have installed is not knowable when the system is built.
-
-          Per-user profile symlinks live under {file}`/home`, so enabling this
-          relaxes the unit's `ProtectHome` from `true` to `"read-only"`. The
-          module does that on its own, and reverts it when this is disabled.
+          `-m`. Null omits the flag entirely, leaving vulnix on its own default.
         '';
       };
 
       closures = lib.mkOption {
         type = lib.types.listOf lib.types.str;
-        default = [ ];
+        default = [
+          "/nix/var/nix/profiles/default"
+          "/nix/var/nix/profiles/per-user/*/profile"
+          "/home/*/.nix-profile"
+          "/home/*/.local/state/nix/profiles/profile"
+          # The generation closure, a superset of the user profile above.
+          "/home/*/.local/state/nix/profiles/home-manager"
+        ];
         example = lib.literalExpression ''
           [ "/nix/var/nix/profiles/per-user/buildbot/profile" ]
         '';
         description = ''
-          Additional store paths to scan, on top of the running system.
-
-          The scan always passes `-S -C`. `-S` supplies the current system as a
-          target and `-C` selects the traversal: every target is examined with
-          {command}`nix path-info -r`, so a package is reported only if the
-          running system can actually reach it. An empty list therefore scans
-          the activated system plus whatever
-          {option}`services.vulnix.scanProfiles` discovers, and entries here are
-          added to those rather than replacing them.
-
-          Use this for anything those two miss, such as a service-owned profile
-          outside the standard locations.
-
-          Without `-C`, vulnix resolves each target to its {file}`.drv` and
-          walks {command}`nix-store -qR` over that instead. The requisites of a
-          derivation are its *build* inputs, so that pulls in bootstrap
-          compilers, source archives, and language build tooling that sits in
-          the store but never executes -- on a typical machine the difference
-          between roughly 12000 and 1700 paths, with the extra 10000 producing
-          high-scoring findings that nothing can reach.
-
-          Entries must be strings. A Nix path literal would be copied into the
-          store during evaluation, and the scan would then examine that frozen
-          copy under a new name instead of the live system.
+          What to scan on top of the running system. Entries are shell glob
+          patterns; each match is resolved to its store path, and patterns
+          matching nothing are skipped. Set to `[ ]` to scan only the system.
         '';
       };
 
@@ -143,34 +103,6 @@ in
           Whitelists passed to vulnix as `-w`. Each entry is either a path,
           which is copied into the Nix store so the sandboxed scan can read it,
           or a URL fetched at scan time.
-
-          Whitelists suppress findings that have been triaged, which keeps the
-          report small enough that a new finding is noticeable. Entries are
-          TOML, keyed by a quoted package name with an optional version:
-
-          ```toml
-          ["libfoo"]
-          cve = [ "CVE-2026-0001" ]
-          comment = "CPE collision: the CVE is against an unrelated project."
-
-          ["libbar-1.2.3"]
-          cve = [ "CVE-2026-0002" ]
-          until = "2026-12-01"
-          comment = "Accepted until the next release bumps this."
-          ```
-
-          The section header must be quoted; vulnix rejects a bare `[libfoo]`.
-          Use `until` for accepted risk so the entry expires and the finding
-          comes back, and reserve undated entries for findings that are wrong
-          rather than merely tolerated.
-
-          Note that {option}`services.vulnix.closures` filters build-only
-          inputs more cheaply than whitelisting them one by one.
-
-          Keep whitelists in the store or under {file}`/etc`. A path under
-          {file}`/home` only resolves while {option}`services.vulnix.scanProfiles`
-          is holding `ProtectHome` at `"read-only"`, and stops resolving the
-          moment profile scanning is turned off.
         '';
       };
     };
@@ -191,6 +123,10 @@ in
         serviceConfig = {
           Type = "oneshot";
 
+          # This triggers the script which runs as root (note the "+"). Everything else
+          # runs as ${cfg.user}:${cfg.group}
+          ExecStartPre = lib.mkIf (cfg.closures != [ ]) "+${resolveTargets}";
+
           User = cfg.user;
           Group = cfg.group;
           RemoveIPC = true;
@@ -205,7 +141,7 @@ in
           AmbientCapabilities = "";
 
           ProtectSystem = "strict";
-          ProtectHome = if cfg.scanProfiles then "read-only" else true;
+          ProtectHome = true;
           PrivateTmp = true;
           PrivateDevices = true;
           ProtectProc = "invisible";
@@ -246,22 +182,9 @@ in
             rm = "${pkgs.coreutils}/bin/rm";
             wc = "${pkgs.coreutils}/bin/wc";
 
-            # -S supplies the current system as a target; -C is the traversal
-            # mode and applies to every target, so extra closures need no flag
-            # of their own.
-            scanTargets = "-S -C " + lib.concatMapStringsSep " " lib.escapeShellArg cfg.closures;
-
             # Omitted entirely when null so vulnix keeps its own default.
             mirrorArg = lib.optionalString (cfg.mirror != null)
               "-m ${lib.escapeShellArg cfg.mirror}";
-
-            # Left unquoted on purpose so the shell expands them.
-            profileGlobs = lib.concatStringsSep " " [
-              "/nix/var/nix/profiles/default"
-              "/nix/var/nix/profiles/per-user/*/profile"
-              "/home/*/.nix-profile"
-              "/home/*/.local/state/nix/profiles/profile"
-            ];
 
             whitelistArgs = lib.concatMapStringsSep " "
               (w: "-w ${lib.escapeShellArg "${w}"}")
@@ -276,21 +199,22 @@ in
             staging="$latest.new"
             compact="$latest.compact"
 
-            # Determine which extra profiles need to be scanned
-            # NOTE: this has to be done at script runtime, not at build-time, hence why it's here
-            profileTargets=()
-            ${lib.optionalString cfg.scanProfiles ''
-              for profile in ${profileGlobs}; do
-                if [ -e "$profile" ]; then
-                  profileTargets+=("$profile")
-                fi
-              done
-              echo "scanning ''${#profileTargets[@]} profile(s) alongside the system" >&2
+            # Resolved by the privileged ExecStartPre; see resolveTargets.
+            extraTargets=()
+            ${lib.optionalString (cfg.closures != [ ]) ''
+              resolved="$STATE_DIRECTORY/targets"
+              if [ -s "$resolved" ]; then
+                while IFS= read -r target; do
+                  [ -n "$target" ] && extraTargets+=("$target")
+                done <"$resolved"
+              fi
+              echo "scanning ''${#extraTargets[@]} extra closure(s) alongside the system" >&2
             ''}
 
             # Execute the actual scan, and save to staging file
+            # -S adds the running system; -C applies the traversal to every target.
             rc=0
-            ${vulnix} ${scanTargets} "''${profileTargets[@]}" ${mirrorArg} ${whitelistArgs} \
+            ${vulnix} -S -C "''${extraTargets[@]}" ${mirrorArg} ${whitelistArgs} \
               --json >"$staging" || rc=$?
 
             # If the staging file is empty, then something went wrong
