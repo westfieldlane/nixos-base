@@ -2,6 +2,42 @@
 let
   cfg = config.services.vulnix;
 
+  # A malformed whitelist is not a warning. vulnix aborts while loading it, so
+  # ONE bad character stops every suppression in the file from applying at
+  # once -- and the way you find out is a scan that suddenly reports dozens of
+  # findings you triaged months ago. Validating here turns that into a build
+  # failure at the point the typo was introduced.
+  #
+  # The two regexes mirror vulnix/whitelist.py:check_section_header, which
+  # rejects unquoted section headers before TOML parsing ever runs.
+  whitelistChecker = pkgs.writeText "check-vulnix-whitelist.py" ''
+    import re
+    import sys
+
+    import toml
+
+    path = sys.argv[1]
+    with open(path) as fobj:
+        content = fobj.read()
+
+    if re.search(r'^\s*\[[^"a-zA-Z]', content, re.M) or \
+       re.search(r'^\s*\[[^\]]*[^"a-zA-Z0-9]\]$', content, re.M):
+        sys.exit("vulnix requires quoted section headers, e.g. [\"pname\"]")
+
+    toml.load(path)
+  '';
+
+  # Paths are checked and passed through; strings are URLs fetched at scan time
+  # and cannot be inspected at build time.
+  checkWhitelist = w:
+    if builtins.isPath w then
+      pkgs.runCommand "checked-${baseNameOf (toString w)}" { src = w; } ''
+        ${pkgs.python3.withPackages (ps: [ ps.toml ])}/bin/python3 \
+          ${whitelistChecker} "$src"
+        cp "$src" "$out"
+      ''
+    else w;
+
   # WARNING: resolveTargets specifically runs as root so the scanner
   # utility can run with minimal permissions. This will resolve all targets
   # in the cfg.closures option to their nix store paths.
@@ -186,8 +222,10 @@ in
             mirrorArg = lib.optionalString (cfg.mirror != null)
               "-m ${lib.escapeShellArg cfg.mirror}";
 
+            # checkWhitelist turns each path into a build-time-validated copy;
+            # URLs pass through untouched. See the top of this file.
             whitelistArgs = lib.concatMapStringsSep " "
-              (w: "-w ${lib.escapeShellArg "${w}"}")
+              (w: "-w ${lib.escapeShellArg "${checkWhitelist w}"}")
               cfg.whitelists;
           in
           ''
