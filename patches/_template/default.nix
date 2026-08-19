@@ -44,7 +44,8 @@
 #      SRC=$(nix-build '<nixpkgs>' -A <attr>.src --no-out-link)
 #      cp -r "$SRC" /tmp/src && chmod -R u+w /tmp/src
 #      cd /tmp/src && patch -p1 --dry-run < .../CVE-YYYY-NNNNN.patch
-#    Then build it for real: ../../check.sh <attr>
+#    Then build it for real, through the overlay rather than stock nixpkgs:
+#      nixos-rebuild build -I nixos-config=../../tests/host.nix
 #
 # 8. Delete the directory once nixpkgs catches up. The assert below tells you
 #    when, and the covered filter keeps the build green in the meantime.
