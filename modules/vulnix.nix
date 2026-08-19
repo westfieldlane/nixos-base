@@ -2,7 +2,7 @@
 let
   cfg = config.services.vulnix;
 
-  # WARNING: This (resolveTargets) specifically runs as root so the scanner
+  # WARNING: resolveTargets specifically runs as root so the scanner
   # utility can run with minimal permissions. This will resolve all targets
   # in the cfg.closures option to their nix store paths.
   resolveTargets = pkgs.writeShellScript "vulnix-resolve-targets" ''

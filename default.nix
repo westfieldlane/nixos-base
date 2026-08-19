@@ -22,6 +22,7 @@
     ./sudo.nix
 
     ./modules
+    ./patches
     ./services
   ];
 }
