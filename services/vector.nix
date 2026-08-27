@@ -1,3 +1,16 @@
+{ config, lib, ... }:
+let
+  vulnix = config.services.vulnix;
+
+  # The vulnix source only makes sense on a host that runs the scanner;
+  # guarding it keeps the base usable everywhere else.
+  vulnixEnabled = vulnix.enable;
+
+  # Everything that has been through a normalize pass. Sinks take this
+  # rather than spelling the list out, so adding a source cannot silently
+  # miss one.
+  normalized = [ "normalize" ] ++ lib.optional vulnixEnabled "vulnix_normalize";
+in
 {
   # vector.service — log collection + normalization shipper.
   #
@@ -8,6 +21,10 @@
   #   Stage 2: Vector reads journald, normalizes to an ECS-lite schema,
   #            and writes daily per-dataset JSONL to /var/log/vector.
   #
+  # One exception to stage 1: the vulnix report is structured JSON read
+  # straight off disk, never through journald — reports run well past
+  # journald's 48K LineMax and would arrive truncated.
+  #
   # No downstream sink yet. When one is available, add sinks.<name>
   # alongside local_archive — Vector fans out, and the archive keeps
   # working as a durable local buffer.
@@ -15,7 +32,7 @@
     enable = true;
     journaldAccess = true;
 
-    settings = {
+    settings = lib.recursiveUpdate {
       data_dir = "/var/lib/vector";
 
       sources.journald = {
@@ -135,11 +152,110 @@
       # later; Vector will fan out and this stays as a durability floor.
       sinks.local_archive = {
         type = "file";
-        inputs = [ "normalize" ];
+        inputs = normalized;
         path = "/var/log/vector/{{ data_stream.dataset }}-%Y-%m-%d.jsonl";
         encoding.codec = "json";
       };
-    };
+    } (lib.optionalAttrs vulnixEnabled {
+      sources.vulnix_report = {
+        type = "file";
+
+        # The exact path, not a glob: previous.json sits beside it and holds
+        # a report that has already been shipped.
+        include = [ "/var/log/${vulnix.user}/latest.json" ];
+        read_from = "beginning";
+
+        # device_and_inode, NOT the default checksum. The scan replaces
+        # latest.json by rename, so every report arrives as a new inode. A
+        # checksum over the opening bytes is unchanged between scans —
+        # vulnix sorts by derivation, so the first entry rarely moves —
+        # which Vector reads as "already ingested" and then ships nothing,
+        # with no error and no log line.
+        fingerprint.strategy = "device_and_inode";
+
+        # vulnix pretty-prints, so one report is many short lines. This
+        # reassembles the array into a single event, which the transform
+        # below fans back out. halt_with on the closing bracket is exact;
+        # the timeout is only the fallback if vulnix ever emitted the array
+        # on one line.
+        multiline = {
+          start_pattern = "^\\[";
+          mode = "halt_with";
+          condition_pattern = "^\\]";
+          timeout_ms = 5000;
+        };
+
+        # Not needed at any report size today: max_line_bytes applies per
+        # line read from disk, before multiline reassembly, and the longest
+        # line vulnix emits is a few hundred bytes. Raised purely so that a
+        # switch to compact JSON output would not silently drop every
+        # report — the default 100K would, without logging anything.
+        max_line_bytes = 16777216;
+      };
+
+      transforms.vulnix_normalize = {
+        type = "remap";
+        inputs = [ "vulnix_report" ];
+        source = ''
+          parsed, err = parse_json(.message)
+          if err != null {
+            log("vulnix: unparseable report, dropping", level: "error")
+            abort
+          }
+
+          # One event in, one per (package, CVE) out: a remap returning an
+          # array has each element emitted as its own event. A clean host
+          # reports an empty array, which emits nothing.
+          #
+          # The file source carries no host field, unlike journald, and the
+          # report carries no scan time — ingest time is within seconds of
+          # the scan, since the source is watching for the rename.
+          ts = now()
+          hostname = get_hostname!()
+
+          out = []
+          for_each(array!(parsed)) -> |_i, entry| {
+            pkg = object!(entry)
+            scores = object(pkg.cvssv3_basescore) ?? {}
+
+            for_each(array(pkg.affected_by) ?? []) -> |_j, id| {
+              cve = string!(id)
+              out = push(out, {
+                "@timestamp": ts,
+                "ecs": { "version": "8.11" },
+                "host": { "hostname": hostname, "name": hostname },
+                "data_stream": {
+                  "type": "logs",
+                  "namespace": "default",
+                  "dataset": "vulnix"
+                },
+                # A census, not a transition: every event says this CVE was
+                # outstanding as of this scan, so there is no outcome to
+                # report. "what changed" is a query across scans.
+                "event": {
+                  "kind": "state",
+                  "category": ["vulnerability"]
+                },
+                "vulnerability": {
+                  "id": cve,
+                  "score": get(scores, [cve]) ?? null
+                },
+                "package": {
+                  "name": pkg.pname,
+                  "version": pkg.version,
+                  "derivation": pkg.derivation
+                }
+              })
+            }
+          }
+
+          # vulnix also carries a per-CVE description. It is deliberately
+          # dropped: in a census it would be repeated on every event, every
+          # scan, every host, and it is retrievable from NVD by id.
+          . = out
+        '';
+      };
+    });
   };
 
   # Age off archive after 30d. Tune down once a durable downstream exists.
@@ -152,6 +268,12 @@
   systemd.services.vector.serviceConfig = {
     StateDirectory = "vector";
     LogsDirectory = "vector";
+
+    # /var/log/vulnix is 0750 vulnix:vulnix and Vector runs as a DynamicUser,
+    # so it cannot be added via users.users — the account does not exist
+    # statically. A supplementary group is what works, and it is load-bearing:
+    # without it the file source silently reads nothing.
+    SupplementaryGroups = lib.optionals vulnixEnabled [ vulnix.group ];
 
     NoNewPrivileges = true;
     ProtectSystem = "strict";

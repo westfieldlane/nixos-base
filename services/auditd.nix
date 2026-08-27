@@ -1,17 +1,19 @@
 { pkgs, ... }: {
-  security.auditd.enable = true;
+  security.auditd = {
+    enable = true;
 
-  security.auditd.settings = {
-    max_log_file = 100;
-    num_logs = 5;
-    max_log_file_action = "rotate";
-  };
+    settings = {
+      max_log_file = 100;
+      num_logs = 5;
+      max_log_file_action = "rotate";
+    };
 
-  security.auditd.plugins.syslog = {
-    active = true;
-    direction = "out";
-    path = "${pkgs.audit}/bin/audisp-syslog";
-    format = "string";
+    plugins.syslog = {
+      active = true;
+      direction = "out";
+      path = "${pkgs.audit}/bin/audisp-syslog";
+      format = "string";
+    };
   };
 
   security.audit.rules = [

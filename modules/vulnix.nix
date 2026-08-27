@@ -2,149 +2,137 @@
 let
   cfg = config.services.vulnix;
 
-  # A malformed whitelist is not a warning. vulnix aborts while loading it, so
-  # ONE bad character stops every suppression in the file from applying at
-  # once -- and the way you find out is a scan that suddenly reports dozens of
-  # findings you triaged months ago. Validating here turns that into a build
-  # failure at the point the typo was introduced.
-  #
-  # The two regexes mirror vulnix/whitelist.py:check_section_header, which
-  # rejects unquoted section headers before TOML parsing ever runs.
-  whitelistChecker = pkgs.writeText "check-vulnix-whitelist.py" ''
-    import re
-    import sys
+  # Runs as root (see the "+" on ExecStartPre) so the globs can resolve into
+  # other users' profiles, which the scan user cannot read.
+  resolveTargets =
+    let
+      chmod = "${pkgs.coreutils}/bin/chmod";
+      mv = "${pkgs.coreutils}/bin/mv";
+      readlink = "${pkgs.coreutils}/bin/readlink";
+      sort = "${pkgs.coreutils}/bin/sort";
+    in
+    pkgs.writeShellScript "vulnix-resolve-targets" ''
+      set -eu
+      export LC_ALL=C
 
-    import toml
+      # Unquoted so the shell expands the globs. A pattern matching nothing is
+      # left as a literal, fails the -e test, and is skipped.
+      for target in ${lib.concatStringsSep " " cfg.closures}; do
+        if [ -e "$target" ]; then
+          ${readlink} -f "$target"
+        else
+          echo "closure target not found, skipping: $target" >&2
+        fi
+      done | ${sort} -u >"$STATE_DIRECTORY/targets.new"
 
-    path = sys.argv[1]
-    with open(path) as fobj:
-        content = fobj.read()
+      # 0644 explicitly: root writes this and the scan user reads it, so the
+      # unit's UMask=0027 would otherwise leave it unreadable.
+      ${chmod} 0644 "$STATE_DIRECTORY/targets.new"
+      ${mv} "$STATE_DIRECTORY/targets.new" "$STATE_DIRECTORY/targets"
+    '';
 
-    if re.search(r'^\s*\[[^"a-zA-Z]', content, re.M) or \
-       re.search(r'^\s*\[[^\]]*[^"a-zA-Z0-9]\]$', content, re.M):
-        sys.exit("vulnix requires quoted section headers, e.g. [\"pname\"]")
-
-    toml.load(path)
-  '';
-
-  # Paths are checked and passed through; strings are URLs fetched at scan time
-  # and cannot be inspected at build time.
-  checkWhitelist = w:
-    if builtins.isPath w then
-      pkgs.runCommand "checked-${baseNameOf (toString w)}" { src = w; } ''
-        ${pkgs.python3.withPackages (ps: [ ps.toml ])}/bin/python3 \
-          ${whitelistChecker} "$src"
-        cp "$src" "$out"
-      ''
-    else w;
-
-  # WARNING: resolveTargets specifically runs as root so the scanner
-  # utility can run with minimal permissions. This will resolve all targets
-  # in the cfg.closures option to their nix store paths.
-  resolveTargets = pkgs.writeShellScript "vulnix-resolve-targets" ''
-    set -eu
-    export LC_ALL=C
-
-    out="$STATE_DIRECTORY/targets"
-    tmp="$out.new"
-
-    : >"$tmp"
-    for target in ${lib.concatStringsSep " " cfg.closures}; do
-      if [ -e "$target" ]; then
-        ${pkgs.coreutils}/bin/readlink -f "$target" >>"$tmp"
-      fi
-    done
-    ${pkgs.coreutils}/bin/sort -u -o "$tmp" "$tmp"
-
-    # 0644 explicitly: root writes it, the scan user reads it, UMask=0027.
-    ${pkgs.coreutils}/bin/install -m 0644 "$tmp" "$out"
-    ${pkgs.coreutils}/bin/rm -f "$tmp"
-  '';
+  # -S adds the running system; -C applies closure traversal to every target.
+  # Mirror is omitted when null so vulnix keeps its own default. Whitelist
+  # paths interpolate to store paths the sandboxed unit can read; strings are
+  # URLs vulnix fetches at scan time.
+  scanCommand = [ "${pkgs.vulnix}/bin/vulnix" "-S" "-C" "--json" ]
+    ++ lib.optionals (cfg.mirror != null) [ "-m" cfg.mirror ]
+    ++ lib.concatMap (w: [ "-w" "${w}" ]) cfg.whitelists;
 in
 {
-  options = {
-    services.vulnix = {
-      enable = lib.mkEnableOption "Periodic CVE scanning with the vulnix utility";
+  options.services.vulnix = {
+    enable = lib.mkEnableOption "Periodic CVE scanning with the vulnix utility";
 
-      dates = lib.mkOption {
-        type = lib.types.str;
-        default = "06:30";
-        example = "daily";
-        description = ''
-          How often or when to run the vulnerability scan. For most desktop and server systems
-          a sufficient scan frequency is once a day.
+    dates = lib.mkOption {
+      type = lib.types.str;
+      default = "06:30";
+      example = "daily";
+      description = ''
+        How often or when to run the scan, in the format described in
+        {manpage}`systemd.time(7)`. Once a day is sufficient for most systems.
+      '';
+    };
 
-          The format is described in {manpage}`systemd.time(7)`.
-        '';
-      };
+    user = lib.mkOption {
+      type = lib.types.str;
+      default = "vulnix";
+      description = ''
+        User the scan runs as. It owns the NVD cache in {file}`/var/lib/${cfg.user}`
+        and the report in {file}`/var/log/${cfg.user}`.
+      '';
+    };
 
-      user = lib.mkOption {
-        type = lib.types.str;
-        default = "vulnix";
-        description = ''
-          User account under which the scan runs. It owns the NVD cache in
-          {file}`/var/lib/vulnix` and the retained report in
-          {file}`/var/log/vulnix`.
-        '';
-      };
+    group = lib.mkOption {
+      type = lib.types.str;
+      default = "vulnix";
+      description = "Primary group of {option}`services.vulnix.user`.";
+    };
 
-      group = lib.mkOption {
-        type = lib.types.str;
-        default = "vulnix";
-        description = ''
-          Primary group of {option}`services.vulnix.user`. 
-        '';
-      };
+    mirror = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "http://mirror.soe.example.org/nvd/";
+      description = ''
+        Base URL the NVD feeds are fetched from, passed as `-m`. Null omits
+        the flag, leaving vulnix on its own default.
+      '';
+    };
 
-      mirror = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        example = "http://mirror.soe.example.org/nvd/";
-        description = ''
-          Base URL the NVD JSON feeds are fetched from, passed to vulnix as
-          `-m`. Null omits the flag entirely, leaving vulnix on its own default.
-        '';
-      };
+    closures = lib.mkOption {
+      type = lib.types.listOf lib.types.str;
+      default = [
+        "/nix/var/nix/profiles/default"
+        "/nix/var/nix/profiles/per-user/*/profile"
+        "/home/*/.nix-profile"
+        "/home/*/.local/state/nix/profiles/profile"
+        "/home/*/.local/state/nix/profiles/home-manager"
+      ];
+      example = lib.literalExpression ''
+        [ "/nix/var/nix/profiles/per-user/buildbot/profile" ]
+      '';
+      description = ''
+        What to scan on top of the running system. Entries are shell glob
+        patterns; each match is resolved to its store path, and patterns
+        matching nothing are skipped. Set to `[ ]` to scan only the system.
+      '';
+    };
 
-      closures = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [
-          "/nix/var/nix/profiles/default"
-          "/nix/var/nix/profiles/per-user/*/profile"
-          "/home/*/.nix-profile"
-          "/home/*/.local/state/nix/profiles/profile"
-          # The generation closure, a superset of the user profile above.
-          "/home/*/.local/state/nix/profiles/home-manager"
-        ];
-        example = lib.literalExpression ''
-          [ "/nix/var/nix/profiles/per-user/buildbot/profile" ]
-        '';
-        description = ''
-          What to scan on top of the running system. Entries are shell glob
-          patterns; each match is resolved to its store path, and patterns
-          matching nothing are skipped. Set to `[ ]` to scan only the system.
-        '';
-      };
-
-      whitelists = lib.mkOption {
-        type = lib.types.listOf (lib.types.either lib.types.path lib.types.str);
-        default = [ ];
-        example = lib.literalExpression ''
-          [
-            ./vulnix-whitelist.toml
-            "https://soe.example.org/vulnix-whitelist.toml"
-          ]
-        '';
-        description = ''
-          Whitelists passed to vulnix as `-w`. Each entry is either a path,
-          which is copied into the Nix store so the sandboxed scan can read it,
-          or a URL fetched at scan time.
-        '';
-      };
+    whitelists = lib.mkOption {
+      type = lib.types.listOf (lib.types.either lib.types.path lib.types.str);
+      default = [ ];
+      example = lib.literalExpression ''
+        [
+          ./vulnix-whitelist.toml
+          "https://soe.example.org/vulnix-whitelist.toml"
+        ]
+      '';
+      description = ''
+        Whitelists passed to vulnix as `-w`. Paths are copied into the Nix
+        store so the sandboxed scan can read them; strings are URLs fetched at
+        scan time. vulnix aborts on a malformed whitelist, which fails the
+        scan rather than silently dropping the suppressions.
+      '';
     };
   };
 
   config = lib.mkIf cfg.enable {
+    # vulnix queries the store with `nix path-info -r --json` — the new CLI,
+    # which is refused outright unless nix-command is enabled. Without it every
+    # scan dies on its first store query, so catch that at build time rather
+    # than at 06:30. extraOptions is checked too: setting the feature there is
+    # equally valid, and failing that config would be wrong.
+    assertions = [
+      {
+        assertion = builtins.elem "nix-command" config.nix.settings.experimental-features
+          || lib.hasInfix "nix-command" config.nix.extraOptions;
+        message = ''
+          services.vulnix requires the "nix-command" experimental feature:
+          vulnix shells out to `nix path-info` and cannot scan the store
+          without it. Add it to nix.settings.experimental-features.
+        '';
+      }
+    ];
+
     users.users.${cfg.user} = {
       isSystemUser = true;
       inherit (cfg) group;
@@ -152,24 +140,67 @@ in
     users.groups.${cfg.group} = { };
 
     systemd = {
-      # Define the service which will execute the CVE scan
       services."vulnix" = {
         description = "Vulnix vulnerability scan";
+        startAt = cfg.dates;
+
+        # vulnix downloads the NVD feeds, so it needs the network up.
+        after = [ "network-online.target" ];
+        wants = [ "network-online.target" ];
+
+        environment = config.nix.envVars
+          // { inherit (config.environment.sessionVariables) NIX_PATH; }
+          // config.networking.proxy.envVars
+          # The NVD cache, which is why the scan needs a writable state dir.
+          // { HOME = "%S/${cfg.user}"; };
+
+        script =
+          let
+            mv = "${pkgs.coreutils}/bin/mv";
+          in
+          ''
+            set -u
+
+            targets=()
+            if [ -e "$STATE_DIRECTORY/targets" ]; then
+              mapfile -t targets <"$STATE_DIRECTORY/targets"
+            fi
+
+            rc=0
+            ${lib.escapeShellArgs scanCommand} "''${targets[@]}" \
+              >"$LOGS_DIRECTORY/latest.json.new" || rc=$?
+
+            # vulnix exits 1 (whitelisted only) and 2 (active advisories) to report
+            # findings, not failure. Anything higher is a real error, and leaves the
+            # previous report untouched.
+            [ "$rc" -le 2 ] || exit "$rc"
+
+            # check the report has contents before promoting
+            if [ ! -s "$LOGS_DIRECTORY/latest.json.new" ]; then
+              echo "vulnix produced no report (exit $rc); keeping the previous one" >&2
+              exit 1
+            fi
+
+            # promote the new json to latest and the old one to previous
+            if [ -e "$LOGS_DIRECTORY/latest.json" ]; then
+              ${mv} -f "$LOGS_DIRECTORY/latest.json" "$LOGS_DIRECTORY/previous.json"
+            fi
+            ${mv} -f "$LOGS_DIRECTORY/latest.json.new" "$LOGS_DIRECTORY/latest.json"
+          '';
 
         serviceConfig = {
           Type = "oneshot";
 
-          # This triggers the script which runs as root (note the "+"). Everything else
-          # runs as ${cfg.user}:${cfg.group}
+          # The "+" runs this one step as root; see resolveTargets.
           ExecStartPre = lib.mkIf (cfg.closures != [ ]) "+${resolveTargets}";
 
           User = cfg.user;
           Group = cfg.group;
           RemoveIPC = true;
 
-          LogsDirectory = "vulnix";
+          LogsDirectory = "${cfg.user}";
           LogsDirectoryMode = "0750";
-          StateDirectory = "vulnix";
+          StateDirectory = "${cfg.user}";
           UMask = "0027";
 
           NoNewPrivileges = true;
@@ -199,136 +230,9 @@ in
           SystemCallFilter = [ "@system-service" "~@privileged" "~@resources" ];
           RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
         };
-
-        environment = config.nix.envVars
-          // {
-          inherit (config.environment.sessionVariables) NIX_PATH;
-          HOME = "/var/lib/vulnix";
-        }
-          // config.networking.proxy.envVars;
-
-        script =
-          let
-            vulnix = "${pkgs.vulnix}/bin/vulnix";
-            jq = "${pkgs.jq}/bin/jq";
-            cat = "${pkgs.coreutils}/bin/cat";
-            comm = "${pkgs.coreutils}/bin/comm";
-            cp = "${pkgs.coreutils}/bin/cp";
-            mv = "${pkgs.coreutils}/bin/mv";
-            rm = "${pkgs.coreutils}/bin/rm";
-            wc = "${pkgs.coreutils}/bin/wc";
-
-            # Omitted entirely when null so vulnix keeps its own default.
-            mirrorArg = lib.optionalString (cfg.mirror != null)
-              "-m ${lib.escapeShellArg cfg.mirror}";
-
-            # checkWhitelist turns each path into a build-time-validated copy;
-            # URLs pass through untouched. See the top of this file.
-            whitelistArgs = lib.concatMapStringsSep " "
-              (w: "-w ${lib.escapeShellArg "${checkWhitelist w}"}")
-              cfg.whitelists;
-          in
-          ''
-            set -e
-
-            export LC_ALL=C
-
-            latest="$LOGS_DIRECTORY/latest.json"
-            staging="$latest.new"
-            compact="$latest.compact"
-
-            # Resolved by the privileged ExecStartPre; see resolveTargets.
-            extraTargets=()
-            ${lib.optionalString (cfg.closures != [ ]) ''
-              resolved="$STATE_DIRECTORY/targets"
-              if [ -s "$resolved" ]; then
-                while IFS= read -r target; do
-                  [ -n "$target" ] && extraTargets+=("$target")
-                done <"$resolved"
-              fi
-              echo "scanning ''${#extraTargets[@]} extra closure(s) alongside the system" >&2
-            ''}
-
-            # Execute the actual scan, and save to staging file
-            # -S adds the running system; -C applies the traversal to every target.
-            rc=0
-            ${vulnix} -S -C "''${extraTargets[@]}" ${mirrorArg} ${whitelistArgs} \
-              --json >"$staging" || rc=$?
-
-            # If the staging file is empty, then something went wrong
-            if ! ${jq} -e . "$staging" >/dev/null 2>&1; then
-              ${rm} -f "$staging"
-              echo "vulnix produced no parseable JSON report (vulnix exit $rc)" >&2
-              [ "$rc" -gt 2 ] || rc=1
-              exit "$rc"
-            fi
-
-            # Triage happens on what changed. The standing list is re-read only
-            # when somebody goes looking; the delta is what needs a decision
-            # today, so it is reported separately and kept small.
-            previous="$LOGS_DIRECTORY/previous.json"
-            pairs() {
-              ${jq} -r '[.[] | . as $pkg | .affected_by[] | "\($pkg.name)\t\(.)"] | sort | .[]' "$1"
-            }
-
-            # Determine what are new CVEs and what are "fixed" CVEs
-            if [ -f "$previous" ]; then
-              pairs "$previous" >"$latest.pairs.old"
-              pairs "$staging" >"$latest.pairs.new"
-
-              ${comm} -13 "$latest.pairs.old" "$latest.pairs.new" >"$latest.pairs.added"
-              ${comm} -23 "$latest.pairs.old" "$latest.pairs.new" >"$latest.pairs.gone"
-
-              if [ -s "$latest.pairs.added" ]; then
-                echo "new since previous scan:" >&2
-                ${cat} "$latest.pairs.added" >&2
-              else
-                echo "no new findings since previous scan" >&2
-              fi
-
-              # The other half of the cycle: confirming a remediation landed.
-              if [ -s "$latest.pairs.gone" ]; then
-                echo "resolved since previous scan:" >&2
-                ${cat} "$latest.pairs.gone" >&2
-              fi
-
-              ${rm} -f "$latest.pairs.old" "$latest.pairs.new" \
-                       "$latest.pairs.added" "$latest.pairs.gone"
-            else
-              echo "no previous report to compare against; this run establishes the baseline" >&2
-            fi
-
-            ${cp} -f "$staging" "$previous"
-            ${mv} -f "$staging" "$latest"
-
-            ${jq} -c . "$latest" >"$compact"
-            ${cat} "$compact"
-
-            size=$(${wc} -c <"$compact")
-            if [ "$size" -gt 48000 ]; then
-              echo "report is $size bytes and may exceed one journal record; full report retained at $latest" >&2
-            fi
-            ${rm} -f "$compact"
-
-            # vulnix exits 1/2 to report findings; only higher codes are errors.
-            if [ "$rc" -gt 2 ]; then
-              exit "$rc"
-            fi
-          '';
-
-        startAt = cfg.dates;
-
-        # vulnix pulls from the NIST database, and therefore needs network access
-        after = [ "network-online.target" ];
-        wants = [ "network-online.target" ];
       };
 
-      # Define the timer which will trigger the scan
-      timers."vulnix" = {
-        timerConfig = {
-          Persistent = true;
-        };
-      };
+      timers."vulnix".timerConfig.Persistent = true;
     };
   };
 }
