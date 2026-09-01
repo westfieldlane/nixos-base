@@ -2,9 +2,6 @@
 {
   systemd.services = lib.mkIf config.services.printing.enable {
     cups = {
-      # Service shouldn't currently be used, therefore set the default to false
-      enable = lib.mkForce false;
-
       # If it's needed at a later date, re-enable with these configs
       serviceConfig = {
         NoNewPrivileges = true;
