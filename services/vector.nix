@@ -265,33 +265,37 @@ in
 
   # Conservative sandbox. No SystemCallFilter yet — tune tighter after
   # observing production behaviour with `systemd-analyze security vector`.
-  systemd.services.vector.serviceConfig = {
-    StateDirectory = "vector";
-    LogsDirectory = "vector";
+  # Guarded so a host that forces Vector off does not get a phantom
+  # vector.service with no ExecStart. See ./docker.nix.
+  systemd.services = lib.mkIf config.services.vector.enable {
+    vector.serviceConfig = {
+      StateDirectory = "vector";
+      LogsDirectory = "vector";
 
-    # /var/log/vulnix is 0750 vulnix:vulnix and Vector runs as a DynamicUser,
-    # so it cannot be added via users.users — the account does not exist
-    # statically. A supplementary group is what works, and it is load-bearing:
-    # without it the file source silently reads nothing.
-    SupplementaryGroups = lib.optionals vulnixEnabled [ vulnix.group ];
+      # /var/log/vulnix is 0750 vulnix:vulnix and Vector runs as a DynamicUser,
+      # so it cannot be added via users.users — the account does not exist
+      # statically. A supplementary group is what works, and it is load-bearing:
+      # without it the file source silently reads nothing.
+      SupplementaryGroups = lib.optionals vulnixEnabled [ vulnix.group ];
 
-    NoNewPrivileges = true;
-    ProtectSystem = "strict";
-    ProtectHome = true;
-    ProtectHostname = true;
-    ProtectKernelTunables = true;
-    ProtectKernelModules = true;
-    ProtectKernelLogs = true;
-    ProtectControlGroups = true;
-    ProtectProc = "invisible";
-    ProtectClock = true;
-    PrivateTmp = true;
-    PrivateDevices = true;
-    RestrictNamespaces = true;
-    RestrictRealtime = true;
-    RestrictSUIDSGID = true;
-    LockPersonality = true;
-    CapabilityBoundingSet = [ "" ];
-    AmbientCapabilities = [ "" ];
+      NoNewPrivileges = true;
+      ProtectSystem = "strict";
+      ProtectHome = true;
+      ProtectHostname = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectKernelLogs = true;
+      ProtectControlGroups = true;
+      ProtectProc = "invisible";
+      ProtectClock = true;
+      PrivateTmp = true;
+      PrivateDevices = true;
+      RestrictNamespaces = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      LockPersonality = true;
+      CapabilityBoundingSet = [ "" ];
+      AmbientCapabilities = [ "" ];
+    };
   };
 }
