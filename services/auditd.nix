@@ -62,56 +62,56 @@
       # a weak security signal on its own. Add back per-host with tighter
       # filters if a specific detection use case emerges.
     ];
+  };
 
-    # Without this every audit record reaches Vector twice: once via the
-    # audispd plugin above, and once natively from journald, which carries no
-    # _SYSTEMD_UNIT or _COMM so the classifier cannot match it and the copy
-    # lands in the `system` dataset unenriched. Relies on the backlog above
-    # holding early-boot records until auditd connects.
-    systemd.sockets.systemd-journald-audit.wantedBy = lib.mkForce [ ];
+  # Without this every audit record reaches Vector twice: once via the
+  # audispd plugin above, and once natively from journald, which carries no
+  # _SYSTEMD_UNIT or _COMM so the classifier cannot match it and the copy
+  # lands in the `system` dataset unenriched. Relies on the backlog above
+  # holding early-boot records until auditd connects.
+  systemd.sockets.systemd-journald-audit.wantedBy = lib.mkForce [ ];
 
-    # Hardening only; guarded so a host that forces auditd off does not get a
-    # phantom auditd.service with no ExecStart. See ./docker.nix.
-    systemd.services = lib.mkIf config.security.auditd.enable {
-      auditd.serviceConfig = {
-        NoNewPrivileges = true;
-        ProtectSystem = "full";
-        ProtectHome = true;
-        ProtectHostname = true;
-        ProtectKernelTunables = true;
-        ProtectKernelModules = true;
-        ProtectControlGroups = true;
-        ProtectProc = "invisible";
-        ProtectClock = true;
-        PrivateTmp = true;
-        PrivateNetwork = true;
-        PrivateMounts = true;
-        PrivateDevices = true;
-        RestrictNamespaces = true;
-        RestrictRealtime = true;
-        RestrictSUIDSGID = true;
-        RestrictAddressFamilies = [
-          "~AF_INET6"
-          "~AF_INET"
-          "~AF_PACKET"
-        ];
-        MemoryDenyWriteExecute = true;
-        LockPersonality = true;
-        SystemCallFilter = [
-          "~@clock"
-          "~@module"
-          "~@mount"
-          "~@swap"
-          "~@obsolete"
-          "~@cpu-emulation"
-        ];
-        SystemCallArchitectures = "native";
-        CapabilityBoundingSet = [
-          "~CAP_CHOWN"
-          "~CAP_FSETID"
-          "~CAP_SETFCAP"
-        ];
-      };
+  # Hardening only; guarded so a host that forces auditd off does not get a
+  # phantom auditd.service with no ExecStart. See ./docker.nix.
+  systemd.services = lib.mkIf config.security.auditd.enable {
+    auditd.serviceConfig = {
+      NoNewPrivileges = true;
+      ProtectSystem = "full";
+      ProtectHome = true;
+      ProtectHostname = true;
+      ProtectKernelTunables = true;
+      ProtectKernelModules = true;
+      ProtectControlGroups = true;
+      ProtectProc = "invisible";
+      ProtectClock = true;
+      PrivateTmp = true;
+      PrivateNetwork = true;
+      PrivateMounts = true;
+      PrivateDevices = true;
+      RestrictNamespaces = true;
+      RestrictRealtime = true;
+      RestrictSUIDSGID = true;
+      RestrictAddressFamilies = [
+        "~AF_INET6"
+        "~AF_INET"
+        "~AF_PACKET"
+      ];
+      MemoryDenyWriteExecute = true;
+      LockPersonality = true;
+      SystemCallFilter = [
+        "~@clock"
+        "~@module"
+        "~@mount"
+        "~@swap"
+        "~@obsolete"
+        "~@cpu-emulation"
+      ];
+      SystemCallArchitectures = "native";
+      CapabilityBoundingSet = [
+        "~CAP_CHOWN"
+        "~CAP_FSETID"
+        "~CAP_SETFCAP"
+      ];
     };
   };
 }
