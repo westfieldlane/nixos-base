@@ -14,10 +14,12 @@ let
     "/var/tmp"
   ];
 
-  # NOTE: with `clamdscan --fdpass`, clamd.conf's ExcludePath is bypassed (the
-  # client walks the tree and passes fds). So the authoritative excludes for the
-  # scheduled scan are the client-side `--exclude-dir` flags in ExecStart below;
-  # the daemon ExcludePath list only applies to manual, non-`--fdpass` scans.
+  # NOTE: neither list below actually takes effect on the scheduled scan.
+  # clamdscan has no --exclude-dir option (it logs "Ignoring unsupported
+  # option" and scans anyway), and --fdpass bypasses clamd.conf ExcludePath
+  # because the client walks the tree itself. --fdpass cannot simply be
+  # dropped either: the daemon runs with PrivateTmp and would scan its own
+  # /tmp. Filter with `find -prune` into --file-list if this is re-enabled.
   excludeDirs = [
     "^/home/[^/]+/\\.local/share/containers"
     "^/home/[^/]+/\\.config/containers"
@@ -34,17 +36,17 @@ in
 {
   services.clamav = {
     daemon = {
-      enable = true;
+      enable = lib.mkDefault false;
       settings = {
         ExcludePath = excludeDirs;
         MaxThreads = 4;
         MaxScanTime = 120000;
       };
     };
-    updater.enable = true;
+    updater.enable = lib.mkDefault false;
     updater.frequency = 12;
     scanner = {
-      enable = true;
+      enable = lib.mkDefault false;
       interval = "*-*-* 05:30:00";
     };
   };
