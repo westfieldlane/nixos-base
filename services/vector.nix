@@ -272,8 +272,18 @@ in
   };
 
   # Age off archive after 30d. Tune down once a durable downstream exists.
+  #
+  # Both paths are listed on purpose. Vector runs as a DynamicUser, so systemd
+  # puts LogsDirectory at /var/log/private/vector and leaves /var/log/vector as
+  # a symlink to it. systemd-tmpfiles opens a cleanup target with O_NOFOLLOW and
+  # gives up on a symlink ("Failed to open directory ...: Not a directory") — at
+  # debug level, so naming only the symlink means the archive grows forever with
+  # no warning in any log. Whichever path is the real directory gets cleaned and
+  # the other is a harmless no-op, so this stays correct either way if the
+  # upstream module ever stops using DynamicUser.
   systemd.tmpfiles.rules = [
     "e /var/log/vector - - - 30d"
+    "e /var/log/private/vector - - - 30d"
   ];
 
   # Conservative sandbox. No SystemCallFilter yet — tune tighter after
