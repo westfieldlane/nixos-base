@@ -281,9 +281,10 @@ in
   # no warning in any log. Whichever path is the real directory gets cleaned and
   # the other is a harmless no-op, so this stays correct either way if the
   # upstream module ever stops using DynamicUser.
+  #
   systemd.tmpfiles.rules = [
-    "e /var/log/vector - - - 30d"
-    "e /var/log/private/vector - - - 30d"
+    "e /var/log/vector - - - m:30d"
+    "e /var/log/private/vector - - - m:30d"
   ];
 
   # Conservative sandbox. No SystemCallFilter yet — tune tighter after
