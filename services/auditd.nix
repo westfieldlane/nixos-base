@@ -52,15 +52,9 @@
       "-a always,exit -F arch=b64 -S execve -C uid!=euid -F euid=0 -k setuid_exec"
       "-a always,exit -F arch=b64 -S execve -C gid!=egid -F egid=0 -k setgid_exec"
 
-      # Permission and ownership changes from user sessions
-      "-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,lchown,fchownat -F auid>=1000 -F auid!=-1 -k perm_change"
+      "-a never,exit -F arch=b64 -F dir=/nix/store -S chmod,fchmod,fchmodat,chown,fchown,lchown,fchownat"
 
-      # NB: previously we watched -EACCES/-EPERM open(),creat(),truncate() for
-      # "denied access." Removed because on desktop hosts every process monitor
-      # (bottom, ps, top…) probes /proc/PID/io on non-owned PIDs constantly,
-      # generating a firehose (22 GB/6h observed). Failed file access is also
-      # a weak security signal on its own. Add back per-host with tighter
-      # filters if a specific detection use case emerges.
+      "-a always,exit -F arch=b64 -S chmod,fchmod,fchmodat,chown,fchown,lchown,fchownat -F auid>=1000 -F auid!=-1 -k perm_change"
     ];
   };
 
