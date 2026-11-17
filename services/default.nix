@@ -7,7 +7,6 @@
     ./avahi.nix
     ./blocky.nix
     ./bluetooth.nix
-    ./chrony.nix
     ./clamav.nix
     ./colord.nix
     ./cups.nix
@@ -21,6 +20,7 @@
     ./NetworkManager.nix
     ./NetworkManager-dispatcher.nix
     ./nix-daemon.nix
+    ./ntpd-rs.nix
     ./nscd.nix
     ./openssh.nix
     ./reload-systemd-vconsole-setup.nix
