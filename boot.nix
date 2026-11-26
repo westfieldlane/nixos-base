@@ -9,7 +9,10 @@
       "randomize_kstack_offset=on"
       "vsyscall=none"
       "debugfs=off"
-      "lockdown=integrity"
+      # FIXME: Re-enable "lockdown=integrity" once NixOS embeds module certs in the
+      # kernel image by default (nixpkgs#578910, follow-up to #571181). Until then
+      # lockdown rejects every module and the initrd can't unlock LUKS. It was a
+      # no-op before nixos-unstable 26.11 anyway (no lockdown LSM, nixpkgs#251159).
     ];
 
     kernel.sysctl = {
